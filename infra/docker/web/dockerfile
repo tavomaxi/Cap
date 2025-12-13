@@ -1,0 +1,44 @@
+# ---- deps ----
+FROM node:20-alpine AS deps
+WORKDIR /app
+
+RUN apk add --no-cache libc6-compat
+RUN corepack enable
+
+# Copiamos manifiestos primero (mejor cache)
+COPY package.json pnpm-lock.yaml* ./
+COPY pnpm-workspace.yaml* ./
+COPY .npmrc* ./
+
+# Si el repo usa paquetes/workspaces, hay que tenerlos para resolver deps
+COPY apps ./apps
+COPY packages ./packages
+COPY crates ./crates
+COPY patches ./patches
+COPY infra ./infra
+
+RUN pnpm install --frozen-lockfile
+
+# ---- build ----
+FROM node:20-alpine AS build
+WORKDIR /app
+RUN apk add --no-cache libc6-compat
+RUN corepack enable
+
+COPY --from=deps /app /app
+
+# Build del web (si falla, te digo abajo qué cambiar)
+RUN pnpm -C apps/web build
+
+# ---- runtime ----
+FROM node:20-alpine AS runner
+WORKDIR /app
+ENV NODE_ENV=production
+RUN apk add --no-cache libc6-compat
+RUN corepack enable
+
+# Copiamos lo necesario para correr
+COPY --from=build /app /app
+
+EXPOSE 3000
+CMD ["pnpm", "-C", "apps/web", "start", "-p", "3000"]
